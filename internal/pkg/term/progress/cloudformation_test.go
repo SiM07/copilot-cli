@@ -529,6 +529,60 @@ func TestEcsServiceResourceComponent_Listen(t *testing.T) {
 		<-c.done // Wait for listen to exit.
 		require.NotNil(t, c.deploymentRenderer, "expected the deployment renderer to be initialized")
 	})
+	t.Run("should not create a deployment renderer for the eventual consistency check event", func(t *testing.T) {
+		// GIVEN
+		ch := make(chan stream.StackEvent)
+		deployDone := make(chan struct{})
+		resourceDone := make(chan struct{})
+		var startTimes []time.Time
+		c := &ecsServiceResourceComponent{
+			cfnStream: ch,
+			logicalID: "Service",
+			group:     new(errgroup.Group),
+			ctx:       context.Background(),
+			done:      make(chan struct{}),
+			resourceRenderer: &mockDynamicRenderer{
+				done: resourceDone,
+			},
+			newDeploymentRender: func(s string, t time.Time) DynamicRenderer {
+				startTimes = append(startTimes, t)
+				return &mockDynamicRenderer{
+					done: deployDone,
+				}
+			},
+		}
+		deployStart := time.Date(2026, 9, 28, 10, 22, 30, 0, time.UTC)
+
+		// WHEN
+		go c.Listen()
+		go func() {
+			ch <- stream.StackEvent{
+				LogicalResourceID:  "Service",
+				PhysicalResourceID: "arn:aws:ecs:us-west-2:1111:service/webapp-test-Cluster/webapp-test-frontend",
+				ResourceStatus:     "UPDATE_IN_PROGRESS",
+				Timestamp:          deployStart,
+			}
+			ch <- stream.StackEvent{
+				LogicalResourceID:    "Service",
+				PhysicalResourceID:   "arn:aws:ecs:us-west-2:1111:service/webapp-test-Cluster/webapp-test-frontend",
+				ResourceStatus:       "UPDATE_IN_PROGRESS",
+				ResourceStatusReason: "Eventual consistency check initiated",
+				Timestamp:            deployStart.Add(3 * time.Minute),
+			}
+			ch <- stream.StackEvent{
+				LogicalResourceID:  "Service",
+				PhysicalResourceID: "arn:aws:ecs:us-west-2:1111:service/webapp-test-Cluster/webapp-test-frontend",
+				ResourceStatus:     "UPDATE_COMPLETE",
+			}
+			close(deployDone)
+			close(resourceDone)
+			close(ch)
+		}()
+
+		// THEN
+		<-c.done // Wait for listen to exit.
+		require.Equal(t, []time.Time{deployStart}, startTimes)
+	})
 	t.Run("should not create a deployment renderer if the service never goes in create or update in progress", func(t *testing.T) {
 		// GIVEN
 		ch := make(chan stream.StackEvent)

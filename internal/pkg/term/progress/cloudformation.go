@@ -17,6 +17,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// eventualConsistencyCheckReason is the status reason of the "UPDATE_IN_PROGRESS" event
+// that CloudFormation sends after a resource is stabilized.
+const eventualConsistencyCheckReason = "Eventual consistency check initiated"
+
 // StackSubscriber is the interface to subscribe to a CloudFormation stack event stream.
 type StackSubscriber interface {
 	Subscribe() <-chan stream.StackEvent
@@ -348,6 +352,11 @@ func (c *ecsServiceResourceComponent) Listen() {
 			if ev.PhysicalResourceID == "" {
 				// New service creates receive two "CREATE_IN_PROGRESS" events.
 				// The first event doesn't have a service name yet, the second one has.
+				continue
+			}
+			if ev.ResourceStatusReason == eventualConsistencyCheckReason {
+				// CloudFormation sends an extra "UPDATE_IN_PROGRESS" event once the service is stabilized.
+				// It doesn't trigger a new ECS deployment, so a new renderer would wait forever for a rollout.
 				continue
 			}
 			// Start a deployment renderer if a service deployment is happening.
