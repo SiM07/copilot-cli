@@ -11,7 +11,7 @@ GOBIN=${ROOT_SRC_DIR}/bin/tools
 COVERAGE=coverage.out
 
 DESTINATION=./bin/local/${BINARY_NAME}
-VERSION=$(shell git describe --always --tags | sed 's/-/+/')
+VERSION=$(shell git describe --always --tags | sed -E 's/-([0-9]+-g[0-9a-f]+)$$/+\1/')
 
 BINARY_S3_BUCKET_PATH=https://ecs-cli-v2-release.s3.amazonaws.com
 
