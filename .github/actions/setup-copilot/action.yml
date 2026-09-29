@@ -1,0 +1,75 @@
+name: Setup Copilot CLI
+description: Download the copilot binary for the runner OS/arch (Linux, macOS, Windows) from GitHub releases and add it to the PATH.
+
+inputs:
+  version:
+    description: Release tag to install (e.g. v1.34.2-fix.1). Defaults to the latest release.
+    required: false
+    default: latest
+  repository:
+    description: Repository hosting the releases.
+    required: false
+    default: SiM07/copilot-cli
+  token:
+    description: Token used to download the release assets.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: Version reported by the installed binary.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install copilot
+      id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ inputs.version }}
+        REPOSITORY: ${{ inputs.repository }}
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS}" in
+          Linux)   os=linux ;;
+          macOS)   os=darwin ;;
+          Windows) os=windows ;;
+          *) echo "::error::Unsupported runner OS: ${RUNNER_OS}"; exit 1 ;;
+        esac
+
+        case "${os}/${RUNNER_ARCH}" in
+          windows/*) asset=copilot-windows-386.exe; bin=copilot.exe ;; # 386 build runs on x64 and arm64 Windows
+          */X64)     asset=copilot-${os}-amd64;     bin=copilot ;;
+          */ARM64)   asset=copilot-${os}-arm64;     bin=copilot ;;
+          *) echo "::error::Unsupported runner architecture: ${RUNNER_ARCH}"; exit 1 ;;
+        esac
+
+        tag=()
+        if [ "${VERSION}" != "latest" ]; then
+          tag=("${VERSION}")
+        fi
+
+        dir="${RUNNER_TEMP}/copilot-bin"
+        mkdir -p "${dir}"
+        gh release download ${tag[@]+"${tag[@]}"} \
+          --repo "${REPOSITORY}" \
+          --pattern "${asset}" \
+          --pattern checksums.txt \
+          --dir "${dir}" \
+          --clobber
+
+        cd "${dir}"
+        if command -v sha256sum >/dev/null; then
+          sha256="sha256sum"
+        else
+          sha256="shasum -a 256" # macOS runners
+        fi
+        grep " ${asset}\$" checksums.txt | ${sha256} --check
+        mv "${asset}" "${bin}"
+        chmod +x "${bin}"
+        echo "${dir}" >> "${GITHUB_PATH}"
+
+        echo "version=$("./${bin}" --version | awk '{print $NF}')" >> "${GITHUB_OUTPUT}"
